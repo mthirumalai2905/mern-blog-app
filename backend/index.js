@@ -4,15 +4,15 @@ const mongoose = require('mongoose');
 const User = require('./models/User');
 const Post = require('./models/Post');
 const bcrypt = require('bcryptjs');
-const app = express();
 const jwt = require('jsonwebtoken');
 const cookieParser = require('cookie-parser');
 const multer = require('multer');
 const uploadMiddleware = multer({ dest: 'uploads/' });
 const fs = require('fs');
 
+const app = express();
 const salt = bcrypt.genSaltSync(10);
-const secret = 'asdfe45we45w345wegw345werjktjwertkj';
+const secret = 'your_secret_key_here';
 
 app.use(cors({ credentials: true, origin: 'http://localhost:3000' }));
 app.use(express.json());
@@ -47,13 +47,13 @@ app.post('/login', async (req, res) => {
     const passOk = bcrypt.compareSync(password, userDoc.password);
 
     if (passOk) {
-      // logged in
-      jwt.sign({ username, id: userDoc._id }, secret, {}, (err, token) => {
-        if (err) throw err;
-        res.cookie('token', token).json({
-          id: userDoc._id,
-          username,
-        });
+      // Generate JWT token
+      const token = jwt.sign({ username, id: userDoc._id }, secret);
+      
+      // Set token in cookie
+      res.cookie('token', token, { httpOnly: true }).json({
+        id: userDoc._id,
+        username,
       });
     } else {
       res.status(400).json({ error: 'Invalid username or password' });
@@ -64,18 +64,24 @@ app.post('/login', async (req, res) => {
   }
 });
 
+// Middleware to verify token
+const verifyToken = (req, res, next) => {
+  const token = req.cookies.token;
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
-app.get('/profile', (req, res) => {
-  const { token } = req.cookies;
-  jwt.verify(token, secret, {}, (err, info) => {
-    if (err) throw err;
-    res.json(info);
+  jwt.verify(token, secret, (err, decoded) => {
+    if (err) return res.status(401).json({ error: 'Unauthorized' });
+    req.user = decoded;
+    next();
   });
+};
+
+app.get('/profile', verifyToken, (req, res) => {
+  res.json(req.user);
 });
 
-app.post('/post', uploadMiddleware.single('file'), async (req, res) => {
+app.post('/post', verifyToken, uploadMiddleware.single('file'), async (req, res) => {
   try {
-    // Check if a file was uploaded
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
@@ -86,33 +92,23 @@ app.post('/post', uploadMiddleware.single('file'), async (req, res) => {
     const newPath = path + '.' + ext;
     fs.renameSync(path, newPath);
 
-    const { token } = req.cookies;
-
-    jwt.verify(token, secret, {}, async (err, info) => {
-      if (err) {
-        console.error(err);
-        res.status(401).json({ error: 'Unauthorized' });
-        return;
-      }
-
-      const { title, summary, content } = req.body;
-      const postDoc = await Post.create({
-        title,
-        summary,
-        content,
-        cover: newPath,
-        author: info.id,
-      });
-
-      res.json(postDoc);
+    const { title, summary, content } = req.body;
+    const postDoc = await Post.create({
+      title,
+      summary,
+      content,
+      cover: newPath,
+      author: req.user.id,
     });
+
+    res.json(postDoc);
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });
 
-app.put('/post', uploadMiddleware.single('file'), async (req, res) => {
+app.put('/post', verifyToken, uploadMiddleware.single('file'), async (req, res) => {
   let newPath = null;
   if (req.file) {
     const { originalname, path } = req.file;
@@ -122,14 +118,12 @@ app.put('/post', uploadMiddleware.single('file'), async (req, res) => {
     fs.renameSync(path, newPath);
   }
 
-  const { token } = req.cookies;
-  jwt.verify(token, secret, {}, async (err, info) => {
-    if (err) throw err;
+  try {
     const { id, title, summary, content } = req.body;
     const postDoc = await Post.findById(id);
-    const isAuthor = JSON.stringify(postDoc.author) === JSON.stringify(info.id);
+    const isAuthor = JSON.stringify(postDoc.author) === JSON.stringify(req.user.id);
     if (!isAuthor) {
-      return res.status(400).json('you are not the author');
+      return res.status(400).json({ error: 'You are not the author' });
     }
     await Post.updateOne(
       { _id: id },
@@ -142,22 +136,40 @@ app.put('/post', uploadMiddleware.single('file'), async (req, res) => {
     );
 
     res.json(postDoc);
-  });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
 });
 
 app.get('/post', async (req, res) => {
-  res.json(
-    await Post.find()
+  try {
+    const posts = await Post.find()
       .populate('author', ['username'])
       .sort({ createdAt: -1 })
-      .limit(20)
-  );
+      .limit(20);
+    res.json(posts);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
 });
 
 app.get('/post/:id', async (req, res) => {
-  const { id } = req.params;
-  const postDoc = await Post.findById(id).populate('author', ['username']);
-  res.json(postDoc);
+  try {
+    const { id } = req.params;
+    const postDoc = await Post.findById(id).populate('author', ['username']);
+    res.json(postDoc);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
 });
 
-app.listen(4000);
+const PORT = process.env.PORT || 4000;
+app.listen(PORT, () => {
+  console.log(`Server started on port ${PORT}`);
+});
+
+
+

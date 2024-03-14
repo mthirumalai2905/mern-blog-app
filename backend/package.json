@@ -1,4 +1,11 @@
 {
+  "name": "your-backend-app",
+  "version": "1.0.0",
+  "description": "Your backend application description",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
   "dependencies": {
     "bcryptjs": "^2.4.3",
     "cookie-parser": "^1.4.6",
